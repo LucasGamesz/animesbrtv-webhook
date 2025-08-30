@@ -9,6 +9,7 @@ DB_FILE     = "episodios_postados.json"
 URL         = "https://animesbr.tv"
 HEADERS     = {"User-Agent": "AnimesBRBot/1.0"}
 LIMIT       = 5
+ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
 
 # ────────── Carregar links já postados ──────────
 if os.path.exists(DB_FILE):
@@ -58,14 +59,15 @@ def get_ultimos_episodios(limit=5):
 # ────────── Função para enviar mensagem ──────────
 def post_discord(ep):
     data = {
-        "content": None,
+        "content": f"<@&{ROLE_ID}>",  # ping do cargo
         "embeds": [{
             "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
             "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
+            "color": 0xFF0000,  # vermelho
             "thumbnail": {"url": ep['imagem']} if ep['imagem'] else {},
             "footer": {"text": f"Animesbr.tv • {ep['data']}"}
         }],
-        "allowed_mentions": {"parse": ["roles"]}
+        "allowed_mentions": {"roles": [ROLE_ID]}  # permite pingar o cargo
     }
     r = requests.post(WEBHOOK_URL, json=data, timeout=10)
     if r.status_code == 204:
