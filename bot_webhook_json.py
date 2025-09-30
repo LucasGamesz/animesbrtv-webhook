@@ -1,19 +1,20 @@
 import os
-import requests, certifi
-from bs4 import BeautifulSoup
 import json
+import cloudscraper
+from bs4 import BeautifulSoup
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DB_FILE     = "episodios_postados.json"
 URL         = "https://animesbr.app"
+LIMIT       = 5
+ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
+
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     "Referer": "https://www.google.com/"
 }
-LIMIT       = 5
-ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
 
 # ────────── Carregar links já postados ──────────
 if os.path.exists(DB_FILE):
@@ -24,8 +25,9 @@ else:
 
 # ────────── Scraper ──────────
 def get_ultimos_episodios(limit=5):
+    scraper = cloudscraper.create_scraper()
     try:
-        r = requests.get(URL, headers=HEADERS, timeout=15, verify=certifi.where())
+        r = scraper.get(URL, headers=HEADERS, timeout=15)
         r.raise_for_status()
     except Exception as e:
         print(f"[ERRO] Falha na requisição: {e}")
@@ -73,6 +75,7 @@ def post_discord(ep):
         }],
         "allowed_mentions": {"roles": [ROLE_ID]}  # permite pingar o cargo
     }
+    import requests
     r = requests.post(WEBHOOK_URL, json=data, timeout=10)
     if r.status_code == 204:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
