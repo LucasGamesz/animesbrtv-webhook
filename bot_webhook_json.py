@@ -7,7 +7,9 @@ import json
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 DB_FILE     = "episodios_postados.json"
 URL         = "https://animesbr.app"
-HEADERS     = {"User-Agent": "AnimesBRBot/1.0"}
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+}
 LIMIT       = 5
 ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
 
