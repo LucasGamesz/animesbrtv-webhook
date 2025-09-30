@@ -13,7 +13,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v3
         with:
-          persist-credentials: false  # importante para usar token customizado no push
+          persist-credentials: false
 
       - name: Set up Python
         uses: actions/setup-python@v4
@@ -23,7 +23,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests beautifulsoup4 certifi
+          pip install requests beautifulsoup4 certifi cloudscraper
 
       - name: Run bot
         env:
@@ -37,7 +37,6 @@ jobs:
           git add episodios_postados.json
           git diff --quiet && git diff --staged --quiet || git commit -m "Atualiza JSON de episódios postados"
           
-          # Detecta branch atual dinamicamente
           BRANCH=$(git rev-parse --abbrev-ref HEAD)
           git push "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" HEAD:$BRANCH
         env:
