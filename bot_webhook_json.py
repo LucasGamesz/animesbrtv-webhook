@@ -22,10 +22,10 @@ HEADERS = {
 # ATENÇÃO: Substitua ESTA LISTA por endereços ativos que você encontrar!
 # Formato: "http://IP:PORTA" ou "http://USUARIO:SENHA@IP:PORTA"
 FALLBACK_PROXIES = [
-    # Proxies de exemplo - AGORA CORRETAMENTE FORMATADOS COMO STRINGS!
+    # Proxies de exemplo
+    "http://177.11.67.162:8999",
     "http://177.136.44.194:54443",
     "http://187.19.201.217:8080",
-    "http://177.11.67.162:8999",
     "http://45.182.177.81:9947",
     "http://31.97.93.252:3128",
     "http://187.103.105.20:8085",
@@ -85,7 +85,7 @@ def get_ultimos_episodios(limit=5):
 
         try:
             # Tenta fazer a requisição usando o proxy atual
-            r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=proxies_dict)
+            r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=proxies_dict)
             r.raise_for_status()
             
             # Se chegou aqui, o proxy funcionou! Sai do loop
@@ -127,13 +127,11 @@ def get_ultimos_episodios(limit=5):
             # 1. Extrai 'data-src' ou 'src'
             imagem_url = img_tag.get('data-src') or img_tag.get('src')
 
-            # 2. CORREÇÃO: Converte URL relativa para absoluta se necessário
+            # 2. CORREÇÃO: Converte URL relativa para absoluta
             if imagem_url:
                 if imagem_url.startswith('//'):
-                    # Converte //site.com/img.jpg para https://site.com/img.jpg
                     imagem_url = 'https:' + imagem_url
                 elif not imagem_url.startswith('http'):
-                     # Trata URLs relativas como /wp-content/... 
                     imagem_url = URL + imagem_url
 
         episodios.append({
@@ -142,38 +140,70 @@ def get_ultimos_episodios(limit=5):
             "nome_anime": nome_anime,
             "qualidade": qualidade,
             "data": data,
-            "imagem": imagem_url
+            "imagem": imagem_url # URL absoluta pronta para download
         })
     return episodios
 
-# ────────── Função para enviar mensagem (com Debug e Cache Buster) ──────────
+# ────────── Função para enviar mensagem (com Imagem como Anexo) ──────────
 def post_discord(ep):
+    # 1. Tenta baixar a imagem
+    image_file = None
+    if ep['imagem']:
+        print(f"[IMAGEM] Tentando baixar a imagem: {ep['imagem']}")
+        try:
+            # A requisição de download não precisa de proxy neste ponto, mas se precisar use o scraper
+            img_response = requests.get(ep['imagem'], timeout=10) 
+            img_response.raise_for_status() # Lança erro para status 4xx/5xx
+            
+            # Prepara a imagem para ser enviada como anexo
+            # O nome do arquivo é crucial para a referência no embed
+            image_filename = os.path.basename(ep['imagem']).split('?')[0] # Limpa a URL e pega o nome
+            image_file = (image_filename, img_response.content)
+            
+            print(f"[IMAGEM] ✅ Download da imagem bem-sucedido.")
+            
+        except Exception as e:
+            print(f"[IMAGEM] ❌ Falha ao baixar a imagem. Enviando sem anexo. Erro: {e}")
+            image_file = None
+
+    # 2. Monta o Embed
     embed = {
         "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
         "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
-        "color": 0xFF0000,  # vermelho
+        "color": 0xFF0000,
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
     }
+    
+    # Se conseguimos baixar o arquivo, referenciamos ele no campo 'image' do embed
+    if image_file:
+        # 'attachment://<nome_do_arquivo>' refere-se ao arquivo enviado no payload 'files'
+        embed["image"] = {"url": f"attachment://{image_file[0]}"} 
 
-    # CORREÇÃO: Se a imagem existir (ela já será absoluta aqui), adiciona o cache buster.
-    if ep['imagem']: 
-        # Adiciona um parâmetro "?v=1" à URL para forçar o Discord a carregar a thumbnail.
-        imagem_url_com_buster = ep['imagem'] + '?v=1'
-        embed["thumbnail"] = {"url": imagem_url_com_buster}
-
+    # 3. Monta o payload (JSON)
     data = {
         "content": f"<@&{ROLE_ID}>",
         "embeds": [embed],
         "allowed_mentions": {"roles": [ROLE_ID]}
     }
     
-    # Debug do JSON enviado
-    print("[DEBUG] Enviando ao Discord:")
-    print(json.dumps(data, indent=2, ensure_ascii=False))
-
-    r = requests.post(WEBHOOK_URL, json=data, timeout=10)
+    # 4. Envia para o Discord
     
-    # Debug da resposta (importante para o erro 400)
+    if image_file:
+        # Se há arquivo, enviamos com 'multipart/form-data'. 
+        # O JSON dos embeds vai dentro do campo 'payload_json'.
+        files = {'file': image_file}
+        # Converte o restante dos dados para string JSON
+        data_to_send = {'payload_json': json.dumps(data, ensure_ascii=False)}
+        
+        r = requests.post(WEBHOOK_URL, data=data_to_send, files=files, timeout=20) 
+    else:
+        # Se não há arquivo, enviamos como JSON normal
+        r = requests.post(WEBHOOK_URL, json=data, timeout=10)
+    
+    # Debug
+    print("[DEBUG] Enviando ao Discord:")
+    # O debug deve ser do JSON base antes de ser serializado ou enviado
+    print(json.dumps(data, indent=2, ensure_ascii=False))
     print(f"[DEBUG] Resposta Discord: {r.status_code} {r.text}")
 
     if r.status_code == 204:
