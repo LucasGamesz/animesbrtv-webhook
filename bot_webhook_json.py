@@ -2,7 +2,7 @@ import os
 import json
 import cloudscraper
 from bs4 import BeautifulSoup
-import requests # Mantemos para uso na função de post
+import requests
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -15,7 +15,7 @@ ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.google.com/" # O Referer é crucial para hotlinking!
+    "Referer": "https://www.google.com/"
 }
 
 # 💡 LISTA DE PROXIES GRATUITOS BRASILEIROS PARA TENTAR COMO FALLBACK
@@ -148,7 +148,6 @@ def post_discord(ep):
     if ep['imagem'] and WORKING_SCRAPER:
         print(f"[IMAGEM] Tentando baixar a imagem com SCRAPER: {ep['imagem']}")
         try:
-            # Tenta baixar a imagem usando o scraper e o proxy que contornaram o Cloudflare/Geo-block
             img_response = WORKING_SCRAPER.get(
                 ep['imagem'], 
                 headers=HEADERS, 
@@ -157,14 +156,12 @@ def post_discord(ep):
             )
             img_response.raise_for_status() 
             
-            # Prepara a imagem para ser enviada como anexo
             image_filename = os.path.basename(ep['imagem']).split('?')[0]
             image_file = (image_filename, img_response.content)
             
             print(f"[IMAGEM] ✅ Download da imagem bem-sucedido.")
             
         except Exception as e:
-            # Se falhar, é o erro 403 que vimos, e enviamos sem anexo
             print(f"[IMAGEM] ❌ Falha ao baixar a imagem. Enviando sem anexo. Erro: {e}")
             image_file = None
 
@@ -176,7 +173,7 @@ def post_discord(ep):
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
     }
     
-    # Se conseguimos baixar o arquivo, referenciamos ele no campo 'image' do embed
+    # Referencia a imagem como anexo no campo 'image'
     if image_file:
         embed["image"] = {"url": f"attachment://{image_file[0]}"} 
 
@@ -193,7 +190,6 @@ def post_discord(ep):
         data_to_send = {'payload_json': json.dumps(data, ensure_ascii=False)}
         r = requests.post(WEBHOOK_URL, data=data_to_send, files=files, timeout=20) 
     else:
-        # Se não há arquivo, enviamos como JSON normal
         r = requests.post(WEBHOOK_URL, json=data, timeout=10)
     
     # Debug
@@ -201,7 +197,8 @@ def post_discord(ep):
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print(f"[DEBUG] Resposta Discord: {r.status_code} {r.text}")
 
-    if r.status_code == 204:
+    # CORREÇÃO: Aceitar status 200 (com anexo) OU 204 (sem anexo) como sucesso
+    if r.status_code in [200, 204]:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
         return True
     else:
@@ -214,6 +211,7 @@ novo_postado = False
 
 for ep in reversed(episodios):
     if ep["link"] and ep["link"] not in posted_links:
+        # AQUI, se post_discord retornar True, o link é adicionado
         if post_discord(ep): 
             posted_links.add(ep["link"])
             novo_postado = True
