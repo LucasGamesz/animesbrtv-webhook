@@ -85,7 +85,6 @@ def post_discord(ep):
         "allowed_mentions": {"roles": [ROLE_ID]}
     }
 
-    # 🔍 DEBUG – mostra o JSON que vai ser enviado
     print("\n[DEBUG] Enviando ao Discord:")
     print(json.dumps(data, ensure_ascii=False, indent=2))
 
@@ -94,12 +93,14 @@ def post_discord(ep):
         print("[DEBUG] Resposta Discord:", r.status_code, r.text)
     except Exception as e:
         print("[DISCORD] ❌ Erro ao tentar enviar:", e)
-        return
+        return False
 
     if r.status_code == 204:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
+        return True
     else:
         print(f"[DISCORD] ❌ Falha ao enviar: {r.status_code}")
+        return False
 
 # ────────── Loop principal ──────────
 episodios = get_ultimos_episodios(LIMIT)
@@ -107,9 +108,12 @@ novo_postado = False
 
 for ep in reversed(episodios):
     if ep["link"] and ep["link"] not in posted_links:
-        post_discord(ep)
-        posted_links.add(ep["link"])
-        novo_postado = True
+        sucesso = post_discord(ep)
+        if sucesso:  # ✅ só salva se o envio for bem-sucedido
+            posted_links.add(ep["link"])
+            novo_postado = True
+        else:
+            print(f"[BOT] ⚠️ Envio falhou, não será salvo: {ep['titulo_ep']}")
     else:
         print(f"[BOT] Episódio já postado ou inválido: {ep['titulo_ep']}")
 
