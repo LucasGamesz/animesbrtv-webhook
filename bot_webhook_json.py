@@ -122,11 +122,17 @@ def get_ultimos_episodios(limit=5):
         poster_div = artigo.find('div', class_='poster')
         img_tag    = poster_div.find('img') if poster_div else None
         
+        imagem_url = None
         if img_tag:
-            # Tenta pegar 'data-src' ou 'src'
+            # 1. Extrai 'data-src' ou 'src'
             imagem_url = img_tag.get('data-src') or img_tag.get('src')
-        else:
-            imagem_url = None
+
+            # 2. CORREÇÃO: Converte URL relativa para absoluta se necessário
+            if imagem_url and imagem_url.startswith('//'):
+                imagem_url = 'https:' + imagem_url
+            elif imagem_url and not imagem_url.startswith('http'):
+                 # Trata URLs relativas como /wp-content/... (improvável no seu caso, mas seguro)
+                imagem_url = URL + imagem_url
 
         episodios.append({
             "link": link,
