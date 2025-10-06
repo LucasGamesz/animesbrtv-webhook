@@ -60,7 +60,7 @@ if os.path.exists(DB_FILE):
 else:
     posted_links = set()
 
-# ────────── Scraper (com resiliência de Proxy) ──────────
+# ────────── Scraper (com resiliência de Proxy e correção de URL) ──────────
 def get_ultimos_episodios(limit=5):
     scraper = cloudscraper.create_scraper()
     
@@ -128,11 +128,13 @@ def get_ultimos_episodios(limit=5):
             imagem_url = img_tag.get('data-src') or img_tag.get('src')
 
             # 2. CORREÇÃO: Converte URL relativa para absoluta se necessário
-            if imagem_url and imagem_url.startswith('//'):
-                imagem_url = 'https:' + imagem_url
-            elif imagem_url and not imagem_url.startswith('http'):
-                 # Trata URLs relativas como /wp-content/... (improvável no seu caso, mas seguro)
-                imagem_url = URL + imagem_url
+            if imagem_url:
+                if imagem_url.startswith('//'):
+                    # Converte //site.com/img.jpg para https://site.com/img.jpg
+                    imagem_url = 'https:' + imagem_url
+                elif not imagem_url.startswith('http'):
+                     # Trata URLs relativas como /wp-content/... 
+                    imagem_url = URL + imagem_url
 
         episodios.append({
             "link": link,
@@ -144,7 +146,7 @@ def get_ultimos_episodios(limit=5):
         })
     return episodios
 
-# ────────── Função para enviar mensagem (com Debug) ──────────
+# ────────── Função para enviar mensagem (com Debug e Cache Buster) ──────────
 def post_discord(ep):
     embed = {
         "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
@@ -153,9 +155,11 @@ def post_discord(ep):
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
     }
 
-    # Adiciona thumbnail apenas se for URL válida
-    if ep['imagem'] and ep['imagem'].startswith("http"):
-        embed["thumbnail"] = {"url": ep['imagem']}
+    # CORREÇÃO: Se a imagem existir (ela já será absoluta aqui), adiciona o cache buster.
+    if ep['imagem']: 
+        # Adiciona um parâmetro "?v=1" à URL para forçar o Discord a carregar a thumbnail.
+        imagem_url_com_buster = ep['imagem'] + '?v=1'
+        embed["thumbnail"] = {"url": imagem_url_com_buster}
 
     data = {
         "content": f"<@&{ROLE_ID}>",
