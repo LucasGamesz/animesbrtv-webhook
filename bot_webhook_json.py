@@ -84,7 +84,18 @@ def post_discord(ep):
         }],
         "allowed_mentions": {"roles": [ROLE_ID]}
     }
-    r = requests.post(WEBHOOK_URL, json=data, timeout=10)
+
+    # 🔍 DEBUG – mostra o JSON que vai ser enviado
+    print("\n[DEBUG] Enviando ao Discord:")
+    print(json.dumps(data, ensure_ascii=False, indent=2))
+
+    try:
+        r = requests.post(WEBHOOK_URL, json=data, timeout=10)
+        print("[DEBUG] Resposta Discord:", r.status_code, r.text)
+    except Exception as e:
+        print("[DISCORD] ❌ Erro ao tentar enviar:", e)
+        return
+
     if r.status_code == 204:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
     else:
