@@ -2,7 +2,7 @@ import os
 import json
 import cloudscraper
 from bs4 import BeautifulSoup
-import requests
+import requests # Mantemos para uso na função de post
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -15,17 +15,15 @@ ROLE_ID     = "1391784968786808873"  # ID do cargo que você quer pingar
 HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
-    "Referer": "https://www.google.com/"
+    "Referer": "https://www.google.com/" # O Referer é crucial para hotlinking!
 }
 
 # 💡 LISTA DE PROXIES GRATUITOS BRASILEIROS PARA TENTAR COMO FALLBACK
-# ATENÇÃO: Substitua ESTA LISTA por endereços ativos que você encontrar!
-# Formato: "http://IP:PORTA" ou "http://USUARIO:SENHA@IP:PORTA"
 FALLBACK_PROXIES = [
-    # Proxies de exemplo
-    "http://177.11.67.162:8999",
+    # Proxies de exemplo - AGORA CORRETAMENTE FORMATADOS COMO STRINGS!
     "http://177.136.44.194:54443",
     "http://187.19.201.217:8080",
+    "http://177.11.67.162:8999",
     "http://45.182.177.81:9947",
     "http://31.97.93.252:3128",
     "http://187.103.105.20:8085",
@@ -40,70 +38,68 @@ FALLBACK_PROXIES = [
     "http://201.8.204.194:8080",
     "http://168.195.214.41:8800",
     "http://45.70.4.89:8081",
-    # Adicione mais proxies aqui...
 ]
 
 # ────────── Carregar links já postados ──────────
 if os.path.exists(DB_FILE):
     try:
         with open(DB_FILE, "r", encoding="utf-8") as f:
-            # Tenta carregar o JSON. Se o arquivo estiver vazio, inicia um set vazio.
             content = f.read()
             if content:
                 posted_links = set(json.loads(content))
             else:
                 posted_links = set()
     except json.JSONDecodeError:
-        # Lida com o JSON corrompido ou malformado (aquele JSONDecodeError)
         print(f"[ALERTA] Arquivo {DB_FILE} corrompido. Iniciando lista vazia.")
         posted_links = set()
 else:
     posted_links = set()
 
+# Variável global para armazenar o scraper (será inicializada na primeira chamada)
+WORKING_SCRAPER = None
+WORKING_PROXY = None
+
 # ────────── Scraper (com resiliência de Proxy e correção de URL) ──────────
 def get_ultimos_episodios(limit=5):
+    global WORKING_SCRAPER
+    global WORKING_PROXY
+
     scraper = cloudscraper.create_scraper()
-    
-    # Monta a lista de proxies a serem testados
     proxies_to_test = []
     if PROXY_URL:
-        proxies_to_test.append(PROXY_URL) # Tenta o proxy principal primeiro
-        
-    proxies_to_test.extend(FALLBACK_PROXIES) # Adiciona os de fallback
+        proxies_to_test.append(PROXY_URL)
+    proxies_to_test.extend(FALLBACK_PROXIES)
     
     r = None
     
     for current_proxy in proxies_to_test:
-        
-        # Monta o dicionário de proxies para a requisição
         proxies_dict = {
             "http": current_proxy,
             "https": current_proxy
         }
-        
         print(f"[TESTE] Tentando com proxy: {current_proxy}")
 
         try:
-            # Tenta fazer a requisição usando o proxy atual
-            r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=proxies_dict)
+            r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=proxies_dict)
             r.raise_for_status()
             
-            # Se chegou aqui, o proxy funcionou! Sai do loop
             print(f"[SUCESSO] Proxy '{current_proxy}' funcionando. Status: {r.status_code}")
+            
+            # ATENÇÃO: Armazena o scraper e o proxy que funcionaram
+            WORKING_SCRAPER = scraper
+            WORKING_PROXY = proxies_dict
             break 
             
         except Exception as e:
-            # Se falhar (timeout ou 403), tenta o próximo proxy
             print(f"[ERRO] Falha com '{current_proxy}': {e}")
             r = None 
             continue
             
-    # Se 'r' ainda for None após testar todos os proxies, a requisição falhou
     if r is None:
         print("[ERRO FATAL] Falha na requisição: Nenhum proxy da lista funcionou.")
         return []
 
-    # --- Processamento dos dados (apenas se a requisição foi bem-sucedida) ---
+    # --- Processamento dos dados ---
     soup = BeautifulSoup(r.text, "html.parser")
     artigos = soup.select('article.item.se.episodes')[:limit]
     episodios = []
@@ -124,10 +120,8 @@ def get_ultimos_episodios(limit=5):
         
         imagem_url = None
         if img_tag:
-            # 1. Extrai 'data-src' ou 'src'
             imagem_url = img_tag.get('data-src') or img_tag.get('src')
-
-            # 2. CORREÇÃO: Converte URL relativa para absoluta
+            
             if imagem_url:
                 if imagem_url.startswith('//'):
                     imagem_url = 'https:' + imagem_url
@@ -140,29 +134,37 @@ def get_ultimos_episodios(limit=5):
             "nome_anime": nome_anime,
             "qualidade": qualidade,
             "data": data,
-            "imagem": imagem_url # URL absoluta pronta para download
+            "imagem": imagem_url
         })
     return episodios
 
 # ────────── Função para enviar mensagem (com Imagem como Anexo) ──────────
 def post_discord(ep):
-    # 1. Tenta baixar a imagem
+    global WORKING_SCRAPER
+    global WORKING_PROXY
+    
+    # 1. Tenta baixar a imagem USANDO O SCRAPER QUE FUNCIONOU
     image_file = None
-    if ep['imagem']:
-        print(f"[IMAGEM] Tentando baixar a imagem: {ep['imagem']}")
+    if ep['imagem'] and WORKING_SCRAPER:
+        print(f"[IMAGEM] Tentando baixar a imagem com SCRAPER: {ep['imagem']}")
         try:
-            # A requisição de download não precisa de proxy neste ponto, mas se precisar use o scraper
-            img_response = requests.get(ep['imagem'], timeout=10) 
-            img_response.raise_for_status() # Lança erro para status 4xx/5xx
+            # Tenta baixar a imagem usando o scraper e o proxy que contornaram o Cloudflare/Geo-block
+            img_response = WORKING_SCRAPER.get(
+                ep['imagem'], 
+                headers=HEADERS, 
+                timeout=20, 
+                proxies=WORKING_PROXY
+            )
+            img_response.raise_for_status() 
             
             # Prepara a imagem para ser enviada como anexo
-            # O nome do arquivo é crucial para a referência no embed
-            image_filename = os.path.basename(ep['imagem']).split('?')[0] # Limpa a URL e pega o nome
+            image_filename = os.path.basename(ep['imagem']).split('?')[0]
             image_file = (image_filename, img_response.content)
             
             print(f"[IMAGEM] ✅ Download da imagem bem-sucedido.")
             
         except Exception as e:
+            # Se falhar, é o erro 403 que vimos, e enviamos sem anexo
             print(f"[IMAGEM] ❌ Falha ao baixar a imagem. Enviando sem anexo. Erro: {e}")
             image_file = None
 
@@ -176,7 +178,6 @@ def post_discord(ep):
     
     # Se conseguimos baixar o arquivo, referenciamos ele no campo 'image' do embed
     if image_file:
-        # 'attachment://<nome_do_arquivo>' refere-se ao arquivo enviado no payload 'files'
         embed["image"] = {"url": f"attachment://{image_file[0]}"} 
 
     # 3. Monta o payload (JSON)
@@ -187,14 +188,9 @@ def post_discord(ep):
     }
     
     # 4. Envia para o Discord
-    
     if image_file:
-        # Se há arquivo, enviamos com 'multipart/form-data'. 
-        # O JSON dos embeds vai dentro do campo 'payload_json'.
         files = {'file': image_file}
-        # Converte o restante dos dados para string JSON
         data_to_send = {'payload_json': json.dumps(data, ensure_ascii=False)}
-        
         r = requests.post(WEBHOOK_URL, data=data_to_send, files=files, timeout=20) 
     else:
         # Se não há arquivo, enviamos como JSON normal
@@ -202,7 +198,6 @@ def post_discord(ep):
     
     # Debug
     print("[DEBUG] Enviando ao Discord:")
-    # O debug deve ser do JSON base antes de ser serializado ou enviado
     print(json.dumps(data, indent=2, ensure_ascii=False))
     print(f"[DEBUG] Resposta Discord: {r.status_code} {r.text}")
 
@@ -219,7 +214,6 @@ novo_postado = False
 
 for ep in reversed(episodios):
     if ep["link"] and ep["link"] not in posted_links:
-        # Só salva no JSON se o envio para o Discord for bem-sucedido (status 204)
         if post_discord(ep): 
             posted_links.add(ep["link"])
             novo_postado = True
@@ -228,6 +222,5 @@ for ep in reversed(episodios):
 
 # ────────── Salvar JSON atualizado ──────────
 if novo_postado:
-    # Garante que o arquivo é criado com um JSON válido mesmo que não existisse
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(list(posted_links), f, ensure_ascii=False, indent=2)
