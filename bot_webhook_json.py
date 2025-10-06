@@ -18,12 +18,7 @@ HEADERS = {
     "Referer": "https://www.google.com/"
 }
 
-PROXIES = None
-if PROXY_URL:
-    PROXIES = {
-        "http": PROXY_URL,
-        "https": PROXY_URL
-    }
+PROXIES = {"http": PROXY_URL, "https": PROXY_URL} if PROXY_URL else None
 
 # ────────── Carregar links já postados ──────────
 if os.path.exists(DB_FILE):
@@ -73,33 +68,35 @@ def get_ultimos_episodios(limit=5):
 
 # ────────── Função para enviar mensagem ──────────
 def post_discord(ep):
+    embed = {
+        "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
+        "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
+        "color": 0xFF0000,  # vermelho
+        "footer": {"text": f"Animesbr.tv • {ep['data']}"}
+    }
+
+    # Adiciona thumbnail apenas se for URL válida
+    if ep['imagem'] and ep['imagem'].startswith("http"):
+        embed["thumbnail"] = {"url": ep['imagem']}
+
     data = {
         "content": f"<@&{ROLE_ID}>",
-        "embeds": [{
-            "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
-            "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
-            "color": 0xFF0000,
-            "thumbnail": {"url": ep['imagem']} if ep['imagem'] else {},
-            "footer": {"text": f"Animesbr.tv • {ep['data']}"}
-        }],
+        "embeds": [embed],
         "allowed_mentions": {"roles": [ROLE_ID]}
     }
 
-    print("\n[DEBUG] Enviando ao Discord:")
-    print(json.dumps(data, ensure_ascii=False, indent=2))
+    print("[DEBUG] Enviando ao Discord:")
+    print(json.dumps(data, indent=2, ensure_ascii=False))
 
-    try:
-        r = requests.post(WEBHOOK_URL, json=data, timeout=10)
-        print("[DEBUG] Resposta Discord:", r.status_code, r.text)
-    except Exception as e:
-        print("[DISCORD] ❌ Erro ao tentar enviar:", e)
-        return False
+    r = requests.post(WEBHOOK_URL, json=data, timeout=10)
+    print(f"[DEBUG] Resposta Discord: {r.status_code} {r.text}")
 
     if r.status_code == 204:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
         return True
     else:
         print(f"[DISCORD] ❌ Falha ao enviar: {r.status_code}")
+        print(f"[BOT] ⚠️ Envio falhou, não será salvo: {ep['titulo_ep']}")
         return False
 
 # ────────── Loop principal ──────────
@@ -108,12 +105,9 @@ novo_postado = False
 
 for ep in reversed(episodios):
     if ep["link"] and ep["link"] not in posted_links:
-        sucesso = post_discord(ep)
-        if sucesso:  # ✅ só salva se o envio for bem-sucedido
+        if post_discord(ep):  # só adiciona ao JSON se envio for bem-sucedido
             posted_links.add(ep["link"])
             novo_postado = True
-        else:
-            print(f"[BOT] ⚠️ Envio falhou, não será salvo: {ep['titulo_ep']}")
     else:
         print(f"[BOT] Episódio já postado ou inválido: {ep['titulo_ep']}")
 
