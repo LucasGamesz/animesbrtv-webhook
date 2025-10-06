@@ -2,9 +2,11 @@ import os
 import json
 import cloudscraper
 from bs4 import BeautifulSoup
+import requests
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+PROXY_URL   = os.getenv("PROXY_URL")  # proxy brasileiro opcional
 DB_FILE     = "episodios_postados.json"
 URL         = "https://animesbr.app"
 LIMIT       = 5
@@ -15,6 +17,13 @@ HEADERS = {
     "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
     "Referer": "https://www.google.com/"
 }
+
+PROXIES = None
+if PROXY_URL:
+    PROXIES = {
+        "http": PROXY_URL,
+        "https": PROXY_URL
+    }
 
 # ────────── Carregar links já postados ──────────
 if os.path.exists(DB_FILE):
@@ -27,7 +36,7 @@ else:
 def get_ultimos_episodios(limit=5):
     scraper = cloudscraper.create_scraper()
     try:
-        r = scraper.get(URL, headers=HEADERS, timeout=15)
+        r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=PROXIES)
         r.raise_for_status()
     except Exception as e:
         print(f"[ERRO] Falha na requisição: {e}")
@@ -65,17 +74,16 @@ def get_ultimos_episodios(limit=5):
 # ────────── Função para enviar mensagem ──────────
 def post_discord(ep):
     data = {
-        "content": f"<@&{ROLE_ID}>",  # ping do cargo
+        "content": f"<@&{ROLE_ID}>",
         "embeds": [{
             "title": f"{ep['nome_anime']} - {ep['titulo_ep']}",
             "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
-            "color": 0xFF0000,  # vermelho
+            "color": 0xFF0000,
             "thumbnail": {"url": ep['imagem']} if ep['imagem'] else {},
             "footer": {"text": f"Animesbr.tv • {ep['data']}"}
         }],
-        "allowed_mentions": {"roles": [ROLE_ID]}  # permite pingar o cargo
+        "allowed_mentions": {"roles": [ROLE_ID]}
     }
-    import requests
     r = requests.post(WEBHOOK_URL, json=data, timeout=10)
     if r.status_code == 204:
         print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
