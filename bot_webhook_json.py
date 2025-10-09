@@ -77,6 +77,10 @@ def get_ultimos_episodios(limit=5):
         try:
             r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=proxies_dict)
             r.raise_for_status()
+    
+            # 💡 Corrigir encoding incorreto (ex: ISO-8859-1)
+            r.encoding = r.apparent_encoding or "utf-8"
+    
             print(f"[SUCESSO] Proxy '{current_proxy}' funcionando. Status: {r.status_code}")
             WORKING_SCRAPER = scraper
             WORKING_PROXY = proxies_dict
