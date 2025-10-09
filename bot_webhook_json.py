@@ -3,7 +3,7 @@ import json
 import cloudscraper
 from bs4 import BeautifulSoup
 import requests
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -94,45 +94,79 @@ def get_ultimos_episodios(limit=5):
     artigos = soup.select('article.item.se.episodes')[:limit]
     episodios = []
 
+    # timezone UTC-3 (America/Sao_Paulo)
+    tz_sp = timezone(timedelta(hours=-3))
+    now_sp = datetime.now(timezone.utc).astimezone(tz_sp)
+    footer_time = now_sp.strftime("%d/%m/%Y %H:%M")
+
     for artigo in artigos:
         data_div = artigo.find('div', class_='data')
-        a_tag = data_div.find('h3').find('a') if data_div else None
-        link = a_tag['href'] if a_tag else None
-        titulo_ep = a_tag.get_text(strip=True) if a_tag else "Episódio"
 
-        # Nome do anime (sem "Novo Anime")
-        nome_tag = data_div.find('span', class_='serie') if data_div else None
-        nome_anime = nome_tag.get_text(strip=True) if nome_tag else ""
+        # link (primeiro <h3><a> normalmente aponta pro episódio)
+        link_anchor = data_div.select_one('h3 a') if data_div else None
+        link = link_anchor['href'] if link_anchor else None
 
+        # h3's: primeiro é o nome, segundo contém "Temporada X Episódio Y"
+        nome_anime = ""
+        ep_info = ""
+        if data_div:
+            h3s = data_div.find_all('h3')
+            if len(h3s) >= 1:
+                # o primeiro h3 geralmente tem o nome do anime (pode conter <a>)
+                nome_anime = h3s[0].get_text(" ", strip=True)
+            if len(h3s) >= 2:
+                # o segundo h3 tem a temporada/episódio (texto limpo)
+                # usar get_text com separador " " para evitar tags quebradas
+                ep_info = h3s[1].get_text(" ", strip=True)
+
+        # se ep_info estiver vazio, tentamos buscar spans/strings alternativas
+        if not ep_info and data_div:
+            # tenta pegar qualquer texto restante em data_div que contenha a palavra "Episódio"
+            txt = data_div.get_text(" ", strip=True)
+            if "Episódio" in txt:
+                # remove o nome do anime se estiver repetido
+                ep_info = txt.replace(nome_anime, "").strip()
+
+        # título final: se temos nome + ep_info -> "Nome - Temporada X Episódio Y"
+        if nome_anime and ep_info:
+            titulo = f"{nome_anime} - {ep_info}"
+        elif nome_anime:
+            titulo = nome_anime
+        elif ep_info:
+            titulo = ep_info
+        else:
+            # fallback para título a partir do link (ou texto do artigo)
+            titulo = link.split("/")[-2].replace("-", " ").title() if link else "Episódio"
+
+        # qualidade
         qual_tag = artigo.find('span', class_='quality')
         qualidade = qual_tag.get_text(strip=True) if qual_tag else "Desconhecida"
 
-        # ⚠️ Removida extração de data da página
-        data = datetime.now().strftime("%d/%m/%Y %H:%M")
-
+        # imagem (prefere data-src, senão src). Normaliza // e relative paths.
         poster_div = artigo.find('div', class_='poster')
         img_tag = poster_div.find('img') if poster_div else None
         imagem_url = None
         if img_tag:
             imagem_url = img_tag.get('data-src') or img_tag.get('src')
-        if imagem_url:
-            if imagem_url.startswith('//'):
-                imagem_url = 'https:' + imagem_url
-            elif not imagem_url.startswith('http'):
-                imagem_url = URL + imagem_url
+            if imagem_url:
+                if imagem_url.startswith('//'):
+                    imagem_url = 'https:' + imagem_url
+                elif not imagem_url.startswith('http'):
+                    imagem_url = URL.rstrip('/') + '/' + imagem_url.lstrip('/')
 
         episodios.append({
             "link": link,
-            "titulo_ep": titulo_ep,
+            "titulo": titulo,
             "nome_anime": nome_anime,
+            "ep_info": ep_info,
             "qualidade": qualidade,
-            "data": data,
+            "data": footer_time,
             "imagem": imagem_url
         })
 
     return episodios
 
-# ────────── Função para enviar mensagem ──────────
+# ────────── Função para enviar mensagem (com Imagem como Anexo) ──────────
 def post_discord(ep):
     global WORKING_SCRAPER
     global WORKING_PROXY
@@ -152,8 +186,9 @@ def post_discord(ep):
             print(f"[IMAGEM] ❌ Falha ao baixar a imagem. Enviando sem anexo. Erro: {e}")
             image_file = None
 
+    # monta embed usando 'titulo' (já montado corretamente)
     embed = {
-        "title": f"{ep['nome_anime']} - {ep['titulo_ep']}".strip(),
+        "title": ep['titulo'],
         "description": f"**Tipo:** {ep['qualidade']}\n[👉 Assistir online]({ep['link']})",
         "color": 0xFF0000,
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
@@ -171,7 +206,7 @@ def post_discord(ep):
     if image_file:
         files = {'file': image_file}
         data_to_send = {'payload_json': json.dumps(data, ensure_ascii=False)}
-        r = requests.post(WEBHOOK_URL, data=data_to_send, files=files, timeout=20)
+        r = requests.post(WEBHOOK_URL, data=data_to_send, files=files, timeout=30)
     else:
         r = requests.post(WEBHOOK_URL, json=data, timeout=10)
 
@@ -180,7 +215,7 @@ def post_discord(ep):
     print(f"[DEBUG] Resposta Discord: {r.status_code} {r.text}")
 
     if r.status_code in [200, 204]:
-        print(f"[DISCORD] ✅ Enviado: {ep['titulo_ep']}")
+        print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
         return True
     else:
         print(f"[DISCORD] ❌ Falha ao enviar: {r.status_code}")
@@ -196,7 +231,7 @@ for ep in reversed(episodios):
             posted_links.add(ep["link"])
             novo_postado = True
     else:
-        print(f"[BOT] Episódio já postado ou inválido: {ep['titulo_ep']}")
+        print(f"[BOT] Episódio já postado ou inválido: {ep.get('titulo','?')}")
 
 if novo_postado:
     with open(DB_FILE, "w", encoding="utf-8") as f:
