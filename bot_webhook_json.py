@@ -1,13 +1,24 @@
-import requests
+import os
+import json
 import cloudscraper
 from bs4 import BeautifulSoup
-import json
-import os
-from datetime import datetime, timedelta
+import requests
+from datetime import datetime, timedelta, timezone
 
-# -----------------------------
-# CONFIGURAÇÃO DE PROXIES
-# -----------------------------
+# ────────── CONFIG ──────────
+WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
+PROXY_URL   = os.getenv("PROXY_URL")
+
+DB_FILE = "episodios_postados.json"
+URL = "https://animesbr.app"
+LIMIT = 5
+ROLE_ID = "1391784968786808873"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept-Language": "pt-BR,pt;q=0.9",
+}
+
 FALLBACK_PROXIES = [
     "http://186.208.248.46:8080",
     "http://138.0.207.3:8085",
@@ -19,168 +30,216 @@ FALLBACK_PROXIES = [
     "http://177.184.199.36:80",
     "http://191.7.197.9:8080",
     "http://206.42.15.142:8090",
-    "http://186.250.202.104:8080"
+    "http://186.250.202.104:8080",
 ]
 
-WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-MAIN_PROXY = os.getenv("PROXY_URL")
+# ────────── DB ──────────
+if os.path.exists(DB_FILE):
+    try:
+        posted_links = set(json.load(open(DB_FILE, "r", encoding="utf-8")))
+    except:
+        posted_links = set()
+else:
+    posted_links = set()
 
-# -----------------------------
-# FUNÇÃO REQUEST COM FALLBACK
-# -----------------------------
-def fazer_request(url):
-    proxies = [{"http": MAIN_PROXY, "https": MAIN_PROXY}] if MAIN_PROXY else []
-    proxies += [{"http": p, "https": p} for p in FALLBACK_PROXIES]
+WORKING_SCRAPER = None
+WORKING_PROXY   = None
+
+
+# ───────────────────────────────────────────────
+#  Obter link do anime via botão "Temporadas"
+# ───────────────────────────────────────────────
+def obter_link_anime(link_ep):
+    global WORKING_SCRAPER, WORKING_PROXY
+
+    try:
+        r = WORKING_SCRAPER.get(link_ep, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+
+        btn = soup.select_one('.epsdsnv a[href*="/animes/"]')
+        if btn:
+            return btn["href"]
+
+        return None
+
+    except Exception as e:
+        print("[ERRO] Falha ao obter link do anime via botão Temporadas:", e)
+        return None
+
+
+# ───────────────────────────────────────────────
+#  Obter sinopse do anime via página oficial
+# ───────────────────────────────────────────────
+def obter_sinopse(link_ep):
+    global WORKING_SCRAPER, WORKING_PROXY
+
+    try:
+        link_anime = obter_link_anime(link_ep)
+        if not link_anime:
+            print("[AVISO] Não foi possível encontrar o link do anime.")
+            return ""
+
+        r = WORKING_SCRAPER.get(link_anime, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        desc = soup.select_one("div.description")
+
+        if not desc:
+            return ""
+
+        ps = desc.find_all("p")
+
+        if len(ps) >= 2:
+            return ps[1].get_text(strip=True)
+
+        if len(ps) == 1:
+            return ps[0].get_text(strip=True)
+
+        return ""
+
+    except Exception as e:
+        print("[ERRO] Falha ao obter sinopse:", e)
+        return ""
+
+
+# ───────────────────────────────────────────────
+#  Extrair episódios da página inicial
+# ───────────────────────────────────────────────
+def get_ultimos_episodios(limit=5):
+    global WORKING_SCRAPER, WORKING_PROXY
 
     scraper = cloudscraper.create_scraper()
 
-    for proxy in proxies:
+    proxies_to_test = []
+    if PROXY_URL:
+        proxies_to_test.append(PROXY_URL)
+    proxies_to_test.extend(FALLBACK_PROXIES)
+
+    r = None
+    for proxy in proxies_to_test:
         try:
-            print(f"Tentando proxy: {proxy['http']}")
-            resp = scraper.get(url, proxies=proxy, timeout=12)
-            if resp.status_code == 200:
-                return resp
-        except Exception:
+            prox_dict = {"http": proxy, "https": proxy}
+            print(f"[TESTE] Proxy: {proxy}")
+            r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=prox_dict)
+            r.raise_for_status()
+            r.encoding = "utf-8"
+            WORKING_SCRAPER = scraper
+            WORKING_PROXY   = prox_dict
+            break
+        except:
+            r = None
             continue
 
-    return None
-
-# -----------------------------
-# OBTER LINK CORRETO DA PÁGINA DO ANIME
-# -----------------------------
-def obter_link_pagina_anime(link_ep):
-    resp = fazer_request(link_ep)
-    if not resp:
-        return None
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-    temporadas_btn = soup.select_one("a.btn.tertiary-bg.mar span.ttu.dn.sm-dib.mal")
-
-    if not temporadas_btn:
-        return None
-
-    a_tag = temporadas_btn.parent
-    anime_link = a_tag.get("href")
-    return anime_link if anime_link else None
-
-# -----------------------------
-# OBTER SINOPSE (SEGUNDO <p>)
-# -----------------------------
-def obter_sinopse(link_anime):
-    if not link_anime:
-        return None
-
-    resp = fazer_request(link_anime)
-    if not resp:
-        return None
-
-    soup = BeautifulSoup(resp.text, "html.parser")
-    desc = soup.select_one(".description")
-
-    if not desc:
-        return None
-
-    ps = desc.find_all("p")
-    if len(ps) < 2:
-        return None
-
-    return ps[1].get_text(strip=True)
-
-# -----------------------------
-# ENVIAR EMBED
-# -----------------------------
-def enviar_discord(ep, sinopse):
-    now = datetime.utcnow() - timedelta(hours=3)
-    hora_atual = now.strftime("%d/%m/%Y • %H:%M")
-
-    titulo = f"<:Animesbrapp:1439021183365288111> {ep['titulo']} ({ep['num']})"
-
-    if sinopse:
-        descricao = f"{sinopse}\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
-    else:
-        descricao = f"**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
-
-    embed = {
-        "embeds": [
-            {
-                "title": titulo,
-                "description": descricao,
-                "color": 0xFF0000,
-                "footer": {
-                    "text": f"Animesbr.tv • {hora_atual}"
-                }
-            }
-        ]
-    }
-
-    requests.post(WEBHOOK_URL, json=embed)
-
-# -----------------------------
-# SALVAR JSON
-# -----------------------------
-def carregar_json():
-    if not os.path.exists("episodios_postados.json"):
-        return []
-    with open("episodios_postados.json", "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def salvar_json(data):
-    with open("episodios_postados.json", "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
-
-# -----------------------------
-# RASPAGEM PRINCIPAL
-# -----------------------------
-def buscar_episodios():
-    url = "https://www.animesbr.app/ultimos-episodios"
-    resp = fazer_request(url)
-    if not resp:
-        print("Falha ao acessar página de episódios.")
+    if r is None:
+        print("[ERRO] Nenhum proxy funcionou.")
         return []
 
-    soup = BeautifulSoup(resp.text, "html.parser")
+    soup = BeautifulSoup(r.text, "html.parser")
+    artigos = soup.select("#widget_list_episodes-2 ul.post-lst li article.post.episodes")[:limit]
 
-    items = soup.select(".item")
     episodios = []
 
-    for item in items:
-        titulo = item.select_one(".entry-title")
-        num = item.select_one(".num-epi")
-        link = item.get("href")
+    # hora atual UTC-3
+    agora_br = datetime.now(timezone(timedelta(hours=-3)))
+    data_formatada = agora_br.strftime("%d/%m/%Y • %H:%M")
 
-        if not titulo or not num or not link:
-            continue
+    for art in artigos:
+        titulo_el = art.select_one("h2.entry-title")
+        titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
+
+        ep_info_el = art.select_one("span.num-epi")
+        ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
+
+        titulo_final = f"<:Animesbrapp:1439021183365288111>  {titulo_raw} ({ep_info})"
+
+        link_el = art.select_one("a.lnk-blk")
+        link = link_el["href"] if link_el else None
+
+        img_el = art.select_one(".post-thumbnail img")
+        imagem = img_el["src"] if img_el else None
+        if imagem and imagem.startswith("//"):
+            imagem = "https:" + imagem
 
         episodios.append({
-            "titulo": titulo.get_text(strip=True),
-            "num": num.get_text(strip=True),
-            "link": link
+            "titulo": titulo_final,
+            "ep_info": ep_info,
+            "link": link,
+            "imagem": imagem,
+            "data": data_formatada,
         })
 
     return episodios
 
-# -----------------------------
-# MAIN LOOP
-# -----------------------------
-def main():
-    postados = carregar_json()
-    novos = buscar_episodios()
 
-    for ep in novos:
-        chave = f"{ep['titulo']}|{ep['num']}"
+# ───────────────────────────────────────────────
+#  ENVIAR PARA O DISCORD
+# ───────────────────────────────────────────────
+def post_discord(ep):
+    global WORKING_SCRAPER
 
-        if chave in postados:
-            continue
+    files = {}
+    if ep["imagem"]:
+        try:
+            img = WORKING_SCRAPER.get(ep["imagem"], headers=HEADERS, timeout=10)
+            if img.status_code == 200:
+                files["file"] = ("poster.jpg", img.content)
+        except:
+            pass
 
-        link_anime = obter_link_pagina_anime(ep["link"])
-        sinopse = obter_sinopse(link_anime)
+    sinopse = obter_sinopse(ep["link"])
 
-        enviar_discord(ep, sinopse)
+    if sinopse:
+        descricao = sinopse + f"\n👉 [Assistir online]({ep['link']})"
+    else:
+        descricao = f"👉 [Assistir online]({ep['link']})"
 
-        postados.append(chave)
-        salvar_json(postados)
+    embed = {
+        "title": ep["titulo"],
+        "description": descricao[:4000],
+        "color": 0xFF0000,
+        "footer": {"text": f"Animesbr.tv • {ep['data']}"}
+    }
 
-    print("Finalizado.")
+    if files:
+        embed["image"] = {"url": "attachment://poster.jpg"}
 
-if __name__ == "__main__":
-    main()
+    payload = {
+        "content": f"<@&{ROLE_ID}>",
+        "embeds": [embed],
+        "allowed_mentions": {"roles": [ROLE_ID]}
+    }
+
+    r = requests.post(
+        WEBHOOK_URL, 
+        data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+        files=files
+    )
+
+    if r.status_code in (200, 204):
+        print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
+        return True
+    else:
+        print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
+        return False
+
+
+# ───────────────────────────────────────────────
+#  LOOP PRINCIPAL
+# ───────────────────────────────────────────────
+episodios = get_ultimos_episodios(LIMIT)
+
+novo = False
+for ep in reversed(episodios):
+    if ep["link"] and ep["link"] not in posted_links:
+        if post_discord(ep):
+            posted_links.add(ep["link"])
+            novo = True
+    else:
+        print(f"[BOT] Já postado: {ep['titulo']}")
+
+if novo:
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(posted_links), f, ensure_ascii=False, indent=2)
