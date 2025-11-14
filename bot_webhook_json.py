@@ -70,6 +70,42 @@ def calcular_data(tempo_str):
 
 
 # ───────────────────────────────────────────────
+#  Obter sinopse da página do anime
+# ───────────────────────────────────────────────
+def obter_sinopse(link_ep):
+    """Extrai o segundo <p> dentro de .description; se não tiver, pega o primeiro."""
+    global WORKING_SCRAPER, WORKING_PROXY
+
+    try:
+        # https://www.animesbr.app/episodios/assistir-tougen-anki-episodio-18
+        slug = link_ep.split("/episodios/assistir-")[-1].split("-episodio")[0]
+        url_anime = f"https://www.animesbr.app/animes/{slug}"
+
+        r = WORKING_SCRAPER.get(url_anime, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
+        r.raise_for_status()
+
+        soup = BeautifulSoup(r.text, "html.parser")
+        desc = soup.select_one("div.description")
+
+        if not desc:
+            return ""
+
+        ps = desc.find_all("p")
+
+        if len(ps) >= 2:
+            return ps[1].get_text(strip=True)
+
+        if len(ps) == 1:
+            return ps[0].get_text(strip=True)
+
+        return ""
+
+    except Exception as e:
+        print("[ERRO] Falha ao obter sinopse:", e)
+        return ""
+
+
+# ───────────────────────────────────────────────
 #  Extrair episódios da página inicial
 # ───────────────────────────────────────────────
 def get_ultimos_episodios(limit=5):
@@ -107,29 +143,22 @@ def get_ultimos_episodios(limit=5):
     episodios = []
 
     for art in artigos:
-        # Título completo do site
         titulo_el = art.select_one("h2.entry-title")
         titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
 
-        # Número do episódio (classe num-epi)
         ep_info_el = art.select_one("span.num-epi")
         ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
 
-        # Novo título no formato pedido:
-        # <entry-title> (<num-epi>)
         titulo_final = f"{titulo_raw} ({ep_info})"
 
-        # Link para a página do episódio
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
 
-        # Imagem
         img_el = art.select_one(".post-thumbnail img")
         imagem = img_el["src"] if img_el else None
         if imagem and imagem.startswith("//"):
             imagem = "https:" + imagem
 
-        # Tempo (ex: "3 horas atrás")
         tempo_el = art.select_one(".entry-meta .time")
         tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
 
@@ -148,11 +177,12 @@ def get_ultimos_episodios(limit=5):
 
 
 # ───────────────────────────────────────────────
-#  ENVIAR PARA O DISCORD (com embed correto)
+#  ENVIAR PARA O DISCORD (com sinopse)
 # ───────────────────────────────────────────────
 def post_discord(ep):
     global WORKING_SCRAPER
 
+    # baixar imagem (sem crop)
     files = {}
     if ep["imagem"]:
         try:
@@ -162,9 +192,16 @@ def post_discord(ep):
         except:
             pass
 
+    # obter sinopse
+    sinopse = obter_sinopse(ep["link"])
+    if sinopse:
+        descricao = sinopse + f"\n\n👉 [Assistir online]({ep['link']})"
+    else:
+        descricao = f"👉 [Assistir online]({ep['link']})"
+
     embed = {
         "title": ep["titulo"],
-        "description": f"👉 [Assistir online]({ep['link']})",
+        "description": descricao[:4000],
         "color": 0xFF0000,
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
     }
