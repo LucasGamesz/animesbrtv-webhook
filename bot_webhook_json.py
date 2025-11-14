@@ -48,13 +48,6 @@ WORKING_PROXY   = None
 
 
 # ───────────────────────────────────────────────
-#  🔧 AGORA IGNORADO → (não usamos mais X horas atrás)
-# ───────────────────────────────────────────────
-def calcular_data(tempo_str):
-    return datetime.now(timezone(timedelta(hours=-3)))
-
-
-# ───────────────────────────────────────────────
 #  Obter sinopse da página do anime
 # ───────────────────────────────────────────────
 def obter_sinopse(link_ep):
@@ -126,6 +119,10 @@ def get_ultimos_episodios(limit=5):
 
     episodios = []
 
+    # hora atual UTC-3
+    agora_br = datetime.now(timezone(timedelta(hours=-3)))
+    data_formatada = agora_br.strftime("%d/%m/%Y • %H:%M")
+
     for art in artigos:
         titulo_el = art.select_one("h2.entry-title")
         titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
@@ -133,8 +130,8 @@ def get_ultimos_episodios(limit=5):
         ep_info_el = art.select_one("span.num-epi")
         ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
 
-        # novo formato:
-        titulo_final = f"<:Animesbrapp:1439021183365288111> {titulo_raw} ({ep_info})"
+        # título final atualizado
+        titulo_final = f"<:Animesbrapp:1439021183365288111>  {titulo_raw} ({ep_info})"
 
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
@@ -144,12 +141,9 @@ def get_ultimos_episodios(limit=5):
         if imagem and imagem.startswith("//"):
             imagem = "https:" + imagem
 
-        # data → ignoramos o tempo da página
-        data_real = datetime.now(timezone(timedelta(hours=-3)))
-        data_formatada = data_real.strftime("%d/%m/%Y %H:%M")
-
         episodios.append({
             "titulo": titulo_final,
+            "ep_info": ep_info,
             "link": link,
             "imagem": imagem,
             "data": data_formatada,
@@ -173,13 +167,12 @@ def post_discord(ep):
         except:
             pass
 
-    # sinopse
+    # obter sinopse — versão original restaurada
     sinopse = obter_sinopse(ep["link"])
-
     if sinopse:
-        descricao = f"{sinopse}\n👉 [Assistir online]({ep['link']})"
+        descricao = sinopse + f"\n\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
     else:
-        descricao = f"👉 [Assistir online]({ep['link']})"
+        descricao = f"\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
 
     embed = {
         "title": ep["titulo"],
@@ -198,7 +191,7 @@ def post_discord(ep):
     }
 
     r = requests.post(
-        WEBHOOK_URL,
+        WEBHOOK_URL, 
         data={"payload_json": json.dumps(payload, ensure_ascii=False)},
         files=files
     )
@@ -206,9 +199,9 @@ def post_discord(ep):
     if r.status_code in (200, 204):
         print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
         return True
-
-    print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
-    return False
+    else:
+        print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
+        return False
 
 
 # ───────────────────────────────────────────────
