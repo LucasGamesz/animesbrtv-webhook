@@ -77,8 +77,8 @@ def calcular_data(tempo_str):
 def cortar_16_9(img_bytes):
     try:
         img = Image.open(BytesIO(img_bytes))
-
         w, h = img.size
+
         target_ratio = 16/9
         current_ratio = w / h
 
@@ -118,12 +118,15 @@ def get_ultimos_episodios(limit=5):
         try:
             prox_dict = {"http": proxy, "https": proxy}
             print(f"[TESTE] Proxy: {proxy}")
+
             r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=prox_dict)
             r.raise_for_status()
             r.encoding = "utf-8"
+
             WORKING_SCRAPER = scraper
             WORKING_PROXY   = prox_dict
             break
+
         except:
             r = None
             continue
@@ -138,33 +141,27 @@ def get_ultimos_episodios(limit=5):
     episodios = []
 
     for art in artigos:
-        titulo_el = art.select_one("h2.entry-title")
-        titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
+        titulo_raw = art.select_one("h2.entry-title").get_text(strip=True)
+        ep_info = art.select_one("span.num-epi").get_text(strip=True)
 
-        ep_el = art.select_one("span.num-epi")
-        ep_info = ep_el.get_text(strip=True) if ep_el else "?"
-
+        # título final reformulado
         titulo_final = f"{titulo_raw} ({ep_info})"
 
-        link_el = art.select_one("a.lnk-blk")
-        link = link_el["href"] if link_el else None
+        link = art.select_one("a.lnk-blk")["href"]
 
         img_el = art.select_one(".post-thumbnail img")
         imagem = img_el["src"] if img_el else None
         if imagem and imagem.startswith("//"):
             imagem = "https:" + imagem
 
-        tempo_el = art.select_one(".entry-meta .time")
-        tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
-
+        tempo_str = art.select_one(".entry-meta .time").get_text(strip=True)
         data_real = calcular_data(tempo_str)
-        data_formatada = data_real.strftime("%d/%m/%Y %H:%M")
 
         episodios.append({
             "titulo": titulo_final,
             "link": link,
             "imagem": imagem,
-            "data": data_formatada,
+            "data": data_real.strftime("%d/%m/%Y %H:%M"),
         })
 
     return episodios
