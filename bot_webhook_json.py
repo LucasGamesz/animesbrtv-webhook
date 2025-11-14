@@ -3,49 +3,67 @@ import json
 import cloudscraper
 from bs4 import BeautifulSoup
 import requests
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta, timezone
+import re
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-PROXY_URL = os.getenv("PROXY_URL")
+PROXY_URL   = os.getenv("PROXY_URL")
 
 DB_FILE = "episodios_postados.json"
-URL = "https://www.animesbr.app"
+URL = "https://animesbr.app"
 LIMIT = 5
 ROLE_ID = "1391784968786808873"
 
 HEADERS = {
     "User-Agent": "Mozilla/5.0",
     "Accept-Language": "pt-BR,pt;q=0.9",
-    "Referer": "https://www.google.com/"
 }
 
 FALLBACK_PROXIES = [
     "http://177.136.44.194:54443",
     "http://187.19.201.217:8080",
-    "http://177.11.67.162:8999",
 ]
 
-# ────────── CARREGAR DB ──────────
+# ────────── DB ──────────
 if os.path.exists(DB_FILE):
     try:
-        with open(DB_FILE, "r", encoding="utf-8") as f:
-            posted_links = set(json.load(f))
+        posted_links = set(json.load(open(DB_FILE, "r", encoding="utf-8")))
     except:
         posted_links = set()
 else:
     posted_links = set()
 
 WORKING_SCRAPER = None
-WORKING_PROXY = None
+WORKING_PROXY   = None
 
 
-# ─────────────────────────────────────────────────────
-#  NOVO PARSER → COMPATÍVEL COM O HTML ATUAL
-# ─────────────────────────────────────────────────────
+# ───────────────────────────────────────────────
+#  Função para converter "X horas atrás" → data real
+# ───────────────────────────────────────────────
+def calcular_data(tempo_str):
+    agora = datetime.now(timezone(timedelta(hours=-3)))
+
+    if "minuto" in tempo_str:
+        n = int(re.findall(r"\d+", tempo_str)[0])
+        return agora - timedelta(minutes=n)
+
+    if "hora" in tempo_str:
+        n = int(re.findall(r"\d+", tempo_str)[0])
+        return agora - timedelta(hours=n)
+
+    if "dia" in tempo_str:
+        n = int(re.findall(r"\d+", tempo_str)[0])
+        return agora - timedelta(days=n)
+
+    return agora  # fallback
+
+
+# ───────────────────────────────────────────────
+#  Extrair episódios (formato atualizado do site)
+# ───────────────────────────────────────────────
 def get_ultimos_episodios(limit=5):
-    global WORKING_SCRAPER
-    global WORKING_PROXY
+    global WORKING_SCRAPER, WORKING_PROXY
 
     scraper = cloudscraper.create_scraper()
 
@@ -55,17 +73,15 @@ def get_ultimos_episodios(limit=5):
     proxies_to_test.extend(FALLBACK_PROXIES)
 
     r = None
-    for current_proxy in proxies_to_test:
+    for proxy in proxies_to_test:
         try:
-            proxies_dict = {"http": current_proxy, "https": current_proxy}
-            print(f"[TESTE] Proxy: {current_proxy}")
-
-            r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=proxies_dict)
+            prox_dict = {"http": proxy, "https": proxy}
+            print(f"[TESTE] Proxy: {proxy}")
+            r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=prox_dict)
             r.raise_for_status()
             r.encoding = r.apparent_encoding
-
             WORKING_SCRAPER = scraper
-            WORKING_PROXY = proxies_dict
+            WORKING_PROXY   = prox_dict
             break
         except:
             r = None
@@ -77,103 +93,97 @@ def get_ultimos_episodios(limit=5):
 
     soup = BeautifulSoup(r.text, "html.parser")
 
-    # NOVO SELETOR
-    artigos = soup.select("#widget_list_episodes-2 ul.post-lst li article.post.episodes")
-    artigos = artigos[:limit]
+    artigos = soup.select("#widget_list_episodes-2 ul.post-lst li article.post.episodes")[:limit]
 
     episodios = []
 
-    tz_sp = timezone(timedelta(hours=-3))
-    footer_time = datetime.now(timezone.utc).astimezone(tz_sp).strftime("%d/%m/%Y %H:%M")
-
-    for artigo in artigos:
-
-        # Título: "Anime Episódio X"
-        titulo_el = artigo.select_one("h2.entry-title")
+    for art in artigos:
+        titulo_el = art.select_one("h2.entry-title")
         titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
 
-        # Extrair só o nome do anime (remover "Episódio X")
-        nome_anime = titulo_raw.rsplit(" Episódio", 1)[0].strip()
+        ep_info = art.select_one("span.num-epi")
+        ep_info = ep_info.get_text(strip=True) if ep_info else "Episódio ?"
 
-        # Temporada e episódio
-        ep_info = artigo.select_one("span.num-epi")
-        ep_info = ep_info.get_text(strip=True) if ep_info else ""
+        link_el = art.select_one("a.lnk-blk")
+        link = link_el["href"] if link_el else None
 
-        # Link
-        link_tag = artigo.select_one("a.lnk-blk")
-        link = link_tag["href"] if link_tag else None
+        img_el = art.select_one(".post-thumbnail img")
+        imagem = img_el["src"] if img_el else None
+        if imagem and imagem.startswith("//"):
+            imagem = "https:" + imagem
 
-        # Imagem
-        img = artigo.select_one(".post-thumbnail img")
-        img_url = None
-        if img:
-            img_url = img.get("src")
-            if img_url.startswith("//"):
-                img_url = "https:" + img_url
+        tempo_el = art.select_one(".entry-meta .time")
+        tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
 
-        # Tempo (ex: "6 horas atrás")
-        tempo = artigo.select_one(".entry-meta .time")
-        tempo = tempo.get_text(strip=True) if tempo else ""
+        data_real = calcular_data(tempo_str)
+        data_formatada = data_real.strftime("%d/%m/%Y %H:%M")
 
         episodios.append({
-            "link": link,
             "titulo": titulo_raw,
-            "nome_anime": nome_anime,
             "ep_info": ep_info,
-            "qualidade": "HD",
-            "data": footer_time,
-            "imagem": img_url,
-            "tempo": tempo,
+            "link": link,
+            "imagem": imagem,
+            "data": data_formatada,
         })
 
     return episodios
 
 
-# ────────── ENVIAR PRO DISCORD ──────────
+# ───────────────────────────────────────────────
+#  ENVIAR PARA O DISCORD
+# ───────────────────────────────────────────────
 def post_discord(ep):
     global WORKING_SCRAPER
 
     files = {}
-    image_url = ep.get("imagem")
-
-    if image_url:
+    if ep["imagem"]:
         try:
-            img = WORKING_SCRAPER.get(image_url, headers=HEADERS, timeout=10)
+            img = WORKING_SCRAPER.get(ep["imagem"], headers=HEADERS, timeout=10)
             if img.status_code == 200:
                 files["file"] = ("poster.jpg", img.content)
         except:
             pass
 
     payload = {
-        "content": f"<@&{ROLE_ID}> **Novo Episódio!**",
+        "content": f"<@&{ROLE_ID}>",
         "embeds": [
             {
-                "title": ep["titulo"],
-                "url": ep["link"],
-                "description": f"**{ep['nome_anime']}**\n{ep['ep_info']}\n⏳ {ep['tempo']}",
-                "image": {"url": "attachment://poster.jpg"} if files else {}
+                "title": ep["titulo"],             # Nome + Episódio igual ao site
+                "description": (
+                    f"**Número do EP:** {ep['ep_info']}\n"
+                    f"👉 [Assistir online]({ep['link']})"
+                ),
+                "color": 0xFF0000,                 # Barrinha vermelha igual antes
+                "image": {"url": "attachment://poster.jpg"} if files else {},
+                "footer": {"text": f"Animesbr.tv • {ep['data']}"}
             }
-        ]
+        ],
+        "allowed_mentions": {"roles": [ROLE_ID]}
     }
 
-    requests.post(WEBHOOK_URL, json=payload, files=files)
+    r = requests.post(WEBHOOK_URL, json=payload, files=files)
+    if r.status_code in (200, 204):
+        print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
+        return True
+    else:
+        print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
+        return False
 
 
-# ────────── MAIN LOOP ──────────
-def main():
-    global posted_links
+# ───────────────────────────────────────────────
+#  LOOP PRINCIPAL
+# ───────────────────────────────────────────────
+episodios = get_ultimos_episodios(LIMIT)
+novo = False
 
-    episodios = get_ultimos_episodios(LIMIT)
-    novos = [e for e in episodios if e["link"] and e["link"] not in posted_links]
+for ep in reversed(episodios):
+    if ep["link"] and ep["link"] not in posted_links:
+        if post_discord(ep):        # Só salva se realmente postou
+            posted_links.add(ep["link"])
+            novo = True
+    else:
+        print(f"[BOT] Já postado: {ep['titulo']}")
 
-    for ep in novos:
-        print(f"[POSTANDO] {ep['titulo']}")
-        post_discord(ep)
-        posted_links.add(ep["link"])
-
+if novo:
     with open(DB_FILE, "w", encoding="utf-8") as f:
         json.dump(list(posted_links), f, ensure_ascii=False, indent=2)
-
-
-if __name__ == "__main__":
-    main()
