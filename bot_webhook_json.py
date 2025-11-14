@@ -5,6 +5,8 @@ from bs4 import BeautifulSoup
 import requests
 from datetime import datetime, timedelta, timezone
 import re
+from io import BytesIO
+from PIL import Image
 
 # ────────── CONFIG ──────────
 WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
@@ -52,8 +54,8 @@ WORKING_PROXY   = None
 # ───────────────────────────────────────────────
 def calcular_data(tempo_str):
     agora = datetime.now(timezone(timedelta(hours=-3)))
-
     num = re.findall(r"\d+", tempo_str)
+
     if not num:
         return agora
 
@@ -70,7 +72,36 @@ def calcular_data(tempo_str):
 
 
 # ───────────────────────────────────────────────
-#  Extração dos episódios (NOVO FORMATO)
+#  Corta imagem para proporção 16:9
+# ───────────────────────────────────────────────
+def cortar_16_9(img_bytes):
+    try:
+        img = Image.open(BytesIO(img_bytes))
+
+        w, h = img.size
+        target_ratio = 16/9
+        current_ratio = w / h
+
+        if current_ratio > target_ratio:
+            new_w = int(h * target_ratio)
+            offset = (w - new_w) // 2
+            img = img.crop((offset, 0, offset + new_w, h))
+        else:
+            new_h = int(w / target_ratio)
+            offset = (h - new_h) // 2
+            img = img.crop((0, offset, w, offset + new_h))
+
+        output = BytesIO()
+        img.save(output, format="JPEG", quality=95)
+        return output.getvalue()
+
+    except Exception as e:
+        print("[ERRO] Falha ao ajustar imagem:", e)
+        return img_bytes
+
+
+# ───────────────────────────────────────────────
+#  Extrair episódios da página inicial
 # ───────────────────────────────────────────────
 def get_ultimos_episodios(limit=5):
     global WORKING_SCRAPER, WORKING_PROXY
@@ -89,7 +120,7 @@ def get_ultimos_episodios(limit=5):
             print(f"[TESTE] Proxy: {proxy}")
             r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=prox_dict)
             r.raise_for_status()
-            r.encoding = "utf-8"  # ← evita bug de título com acentos
+            r.encoding = "utf-8"
             WORKING_SCRAPER = scraper
             WORKING_PROXY   = prox_dict
             break
@@ -102,35 +133,27 @@ def get_ultimos_episodios(limit=5):
         return []
 
     soup = BeautifulSoup(r.text, "html.parser")
-
     artigos = soup.select("#widget_list_episodes-2 ul.post-lst li article.post.episodes")[:limit]
+
     episodios = []
 
     for art in artigos:
-        titulo_raw = art.select_one("h2.entry-title")
-        titulo_raw = titulo_raw.get_text(strip=True) if titulo_raw else "Sem título"
+        titulo_el = art.select_one("h2.entry-title")
+        titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
 
-        # Remover "Temporada X Episódio Y"
-        titulo_limpo = re.sub(r"Temporada\s*\d+\s*Epis[oó]dio\s*\d+", "", titulo_raw, flags=re.I).strip()
+        ep_el = art.select_one("span.num-epi")
+        ep_info = ep_el.get_text(strip=True) if ep_el else "?"
 
-        # Número do episódio
-        ep_info = art.select_one("span.num-epi")
-        ep_num = ep_info.get_text(strip=True) if ep_info else "?"
+        titulo_final = f"{titulo_raw} ({ep_info})"
 
-        # Construir título final
-        titulo_final = f"{titulo_limpo} Episódio {ep_num}"
-
-        # Link final
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
 
-        # Imagem
         img_el = art.select_one(".post-thumbnail img")
         imagem = img_el["src"] if img_el else None
         if imagem and imagem.startswith("//"):
             imagem = "https:" + imagem
 
-        # Tempo publicado
         tempo_el = art.select_one(".entry-meta .time")
         tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
 
@@ -139,7 +162,6 @@ def get_ultimos_episodios(limit=5):
 
         episodios.append({
             "titulo": titulo_final,
-            "ep_num": ep_num,
             "link": link,
             "imagem": imagem,
             "data": data_formatada,
@@ -149,7 +171,7 @@ def get_ultimos_episodios(limit=5):
 
 
 # ───────────────────────────────────────────────
-#  ENVIAR PARA O DISCORD (CORRIGIDO)
+#  ENVIAR PARA O DISCORD
 # ───────────────────────────────────────────────
 def post_discord(ep):
     global WORKING_SCRAPER
@@ -157,18 +179,15 @@ def post_discord(ep):
     files = {}
     if ep["imagem"]:
         try:
-            img = WORKING_SCRAPER.get(ep["imagem"], headers=HEADERS, timeout=10)
-            if img.status_code == 200:
-                files["file"] = ("poster.jpg", img.content)
-        except:
-            pass
+            img_data = WORKING_SCRAPER.get(ep["imagem"], headers=HEADERS, timeout=10).content
+            img_data = cortar_16_9(img_data)
+            files["file"] = ("poster.jpg", img_data)
+        except Exception as e:
+            print("[ERRO] Falha ao baixar imagem:", e)
 
     embed = {
         "title": ep["titulo"],
-        "description": (
-            f"**Número do EP:** {ep['ep_num']}\n"
-            f"👉 [Assistir online]({ep['link']})"
-        ),
+        "description": f"👉 [Assistir online]({ep['link']})",
         "color": 0xFF0000,
         "footer": {"text": f"Animesbr.tv • {ep['data']}"}
     }
@@ -182,7 +201,11 @@ def post_discord(ep):
         "allowed_mentions": {"roles": [ROLE_ID]}
     }
 
-    r = requests.post(WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
+    r = requests.post(
+        WEBHOOK_URL,
+        data={"payload_json": json.dumps(payload, ensure_ascii=False)},
+        files=files
+    )
 
     if r.status_code in (200, 204):
         print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
