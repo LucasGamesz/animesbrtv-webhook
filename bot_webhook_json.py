@@ -48,28 +48,29 @@ WORKING_PROXY   = None
 
 
 # ───────────────────────────────────────────────
-# Converter "X horas atrás" → data real (UTC−3)
+#  Converte "X horas atrás" → data real UTC-3
 # ───────────────────────────────────────────────
 def calcular_data(tempo_str):
     agora = datetime.now(timezone(timedelta(hours=-3)))
 
+    num = re.findall(r"\d+", tempo_str)
+    if not num:
+        return agora
+
+    n = int(num[0])
+
     if "minuto" in tempo_str:
-        n = int(re.findall(r"\d+", tempo_str)[0])
         return agora - timedelta(minutes=n)
-
     if "hora" in tempo_str:
-        n = int(re.findall(r"\d+", tempo_str)[0])
         return agora - timedelta(hours=n)
-
     if "dia" in tempo_str:
-        n = int(re.findall(r"\d+", tempo_str)[0])
         return agora - timedelta(days=n)
 
     return agora
 
 
 # ───────────────────────────────────────────────
-# Extrair episódios
+#  Extração dos episódios (NOVO FORMATO)
 # ───────────────────────────────────────────────
 def get_ultimos_episodios(limit=5):
     global WORKING_SCRAPER, WORKING_PROXY
@@ -88,7 +89,7 @@ def get_ultimos_episodios(limit=5):
             print(f"[TESTE] Proxy: {proxy}")
             r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=prox_dict)
             r.raise_for_status()
-            r.encoding = r.apparent_encoding
+            r.encoding = "utf-8"  # ← evita bug de título com acentos
             WORKING_SCRAPER = scraper
             WORKING_PROXY   = prox_dict
             break
@@ -106,8 +107,105 @@ def get_ultimos_episodios(limit=5):
     episodios = []
 
     for art in artigos:
-        titulo_el = art.select_one("h2.entry-title")
-        titulo_raw = titulo_el.get_text(strip=True) if titulo_el else "Sem título"
+        titulo_raw = art.select_one("h2.entry-title")
+        titulo_raw = titulo_raw.get_text(strip=True) if titulo_raw else "Sem título"
 
-        # Limpar caracteres bugados
-        titulo_raw = titulo_raw.encode("latin1", errors="ignore").decode("utf-8", errors="ignore")
+        # Remover "Temporada X Episódio Y"
+        titulo_limpo = re.sub(r"Temporada\s*\d+\s*Epis[oó]dio\s*\d+", "", titulo_raw, flags=re.I).strip()
+
+        # Número do episódio
+        ep_info = art.select_one("span.num-epi")
+        ep_num = ep_info.get_text(strip=True) if ep_info else "?"
+
+        # Construir título final
+        titulo_final = f"{titulo_limpo} Episódio {ep_num}"
+
+        # Link final
+        link_el = art.select_one("a.lnk-blk")
+        link = link_el["href"] if link_el else None
+
+        # Imagem
+        img_el = art.select_one(".post-thumbnail img")
+        imagem = img_el["src"] if img_el else None
+        if imagem and imagem.startswith("//"):
+            imagem = "https:" + imagem
+
+        # Tempo publicado
+        tempo_el = art.select_one(".entry-meta .time")
+        tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
+
+        data_real = calcular_data(tempo_str)
+        data_formatada = data_real.strftime("%d/%m/%Y %H:%M")
+
+        episodios.append({
+            "titulo": titulo_final,
+            "ep_num": ep_num,
+            "link": link,
+            "imagem": imagem,
+            "data": data_formatada,
+        })
+
+    return episodios
+
+
+# ───────────────────────────────────────────────
+#  ENVIAR PARA O DISCORD (CORRIGIDO)
+# ───────────────────────────────────────────────
+def post_discord(ep):
+    global WORKING_SCRAPER
+
+    files = {}
+    if ep["imagem"]:
+        try:
+            img = WORKING_SCRAPER.get(ep["imagem"], headers=HEADERS, timeout=10)
+            if img.status_code == 200:
+                files["file"] = ("poster.jpg", img.content)
+        except:
+            pass
+
+    embed = {
+        "title": ep["titulo"],
+        "description": (
+            f"**Número do EP:** {ep['ep_num']}\n"
+            f"👉 [Assistir online]({ep['link']})"
+        ),
+        "color": 0xFF0000,
+        "footer": {"text": f"Animesbr.tv • {ep['data']}"}
+    }
+
+    if files:
+        embed["image"] = {"url": "attachment://poster.jpg"}
+
+    payload = {
+        "content": f"<@&{ROLE_ID}>",
+        "embeds": [embed],
+        "allowed_mentions": {"roles": [ROLE_ID]}
+    }
+
+    r = requests.post(WEBHOOK_URL, data={"payload_json": json.dumps(payload)}, files=files)
+
+    if r.status_code in (200, 204):
+        print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
+        return True
+    else:
+        print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
+        return False
+
+
+# ───────────────────────────────────────────────
+#  LOOP PRINCIPAL
+# ───────────────────────────────────────────────
+episodios = get_ultimos_episodios(LIMIT)
+
+novo = False
+for ep in reversed(episodios):
+    if ep["link"] and ep["link"] not in posted_links:
+        if post_discord(ep):
+            posted_links.add(ep["link"])
+            novo = True
+    else:
+        print(f"[BOT] Já postado: {ep['titulo']}")
+
+if novo:
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(list(posted_links), f, ensure_ascii=False, indent=2)
