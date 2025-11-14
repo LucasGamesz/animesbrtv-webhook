@@ -197,7 +197,7 @@ def post_discord(ep):
     if sinopse:
         descricao = sinopse + f"\n**❯ Assistir Online**\n**[Clique aqui]({ep['link']})**"
     else:
-        descricao = f"\n**❯ Assistir Online**\n**[Clique aqui]({ep['link']})**"
+        descricao = f"\n\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
 
     embed = {
         "title": ep["titulo"],
