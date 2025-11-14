@@ -48,25 +48,10 @@ WORKING_PROXY   = None
 
 
 # ───────────────────────────────────────────────
-#  Converte "X horas atrás" → data real UTC-3
+#  🔧 AGORA IGNORADO → (não usamos mais X horas atrás)
 # ───────────────────────────────────────────────
 def calcular_data(tempo_str):
-    agora = datetime.now(timezone(timedelta(hours=-3)))
-    num = re.findall(r"\d+", tempo_str)
-
-    if not num:
-        return agora
-
-    n = int(num[0])
-
-    if "minuto" in tempo_str:
-        return agora - timedelta(minutes=n)
-    if "hora" in tempo_str:
-        return agora - timedelta(hours=n)
-    if "dia" in tempo_str:
-        return agora - timedelta(days=n)
-
-    return agora
+    return datetime.now(timezone(timedelta(hours=-3)))
 
 
 # ───────────────────────────────────────────────
@@ -77,7 +62,6 @@ def obter_sinopse(link_ep):
     global WORKING_SCRAPER, WORKING_PROXY
 
     try:
-        # https://www.animesbr.app/episodios/assistir-tougen-anki-episodio-18
         slug = link_ep.split("/episodios/assistir-")[-1].split("-episodio")[0]
         url_anime = f"https://www.animesbr.app/animes/{slug}"
 
@@ -149,8 +133,8 @@ def get_ultimos_episodios(limit=5):
         ep_info_el = art.select_one("span.num-epi")
         ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
 
-        # título final atualizado
-        titulo_final = f"<:Animesbrapp:1439021183365288111>  {titulo_raw} ({ep_info})"
+        # novo formato:
+        titulo_final = f"<:Animesbrapp:1439021183365288111> {titulo_raw} ({ep_info})"
 
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
@@ -160,15 +144,12 @@ def get_ultimos_episodios(limit=5):
         if imagem and imagem.startswith("//"):
             imagem = "https:" + imagem
 
-        tempo_el = art.select_one(".entry-meta .time")
-        tempo_str = tempo_el.get_text(strip=True) if tempo_el else "0 minutos atrás"
-
-        data_real = calcular_data(tempo_str)
+        # data → ignoramos o tempo da página
+        data_real = datetime.now(timezone(timedelta(hours=-3)))
         data_formatada = data_real.strftime("%d/%m/%Y %H:%M")
 
         episodios.append({
             "titulo": titulo_final,
-            "ep_info": ep_info,
             "link": link,
             "imagem": imagem,
             "data": data_formatada,
@@ -192,12 +173,13 @@ def post_discord(ep):
         except:
             pass
 
-    # obter sinopse
+    # sinopse
     sinopse = obter_sinopse(ep["link"])
+
     if sinopse:
-        descricao = sinopse + f"\n\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
+        descricao = f"{sinopse}\n👉 [Assistir online]({ep['link']})"
     else:
-        descricao = f"\n**❯ Assistir Online**\n[Clique aqui]({ep['link']})"
+        descricao = f"👉 [Assistir online]({ep['link']})"
 
     embed = {
         "title": ep["titulo"],
@@ -216,7 +198,7 @@ def post_discord(ep):
     }
 
     r = requests.post(
-        WEBHOOK_URL, 
+        WEBHOOK_URL,
         data={"payload_json": json.dumps(payload, ensure_ascii=False)},
         files=files
     )
@@ -224,9 +206,9 @@ def post_discord(ep):
     if r.status_code in (200, 204):
         print(f"[DISCORD] ✅ Enviado: {ep['titulo']}")
         return True
-    else:
-        print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
-        return False
+
+    print(f"[DISCORD] ❌ Erro {r.status_code}: {r.text}")
+    return False
 
 
 # ───────────────────────────────────────────────
