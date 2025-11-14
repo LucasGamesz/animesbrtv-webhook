@@ -150,7 +150,7 @@ def get_ultimos_episodios(limit=5):
         ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
 
         # título final atualizado
-        titulo_final = f"<:Animesbrapp:1439021183365288111> {titulo_raw} ({ep_info})"
+        titulo_final = f"<:Animesbrapp:1439021183365288111>  {titulo_raw} ({ep_info})"
 
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
@@ -195,9 +195,9 @@ def post_discord(ep):
     # obter sinopse
     sinopse = obter_sinopse(ep["link"])
     if sinopse:
-        descricao = sinopse + f"\n👉 [Assistir online]({ep['link']})"
+        descricao = sinopse + f"\n**❯ Assistir Online**\n**[Clique aqui]({ep['link']})**"
     else:
-        descricao = f"👉 [Assistir online]({ep['link']})"
+        descricao = f"\n**❯ Assistir Online**\n**[Clique aqui]({ep['link']})**"
 
     embed = {
         "title": ep["titulo"],
