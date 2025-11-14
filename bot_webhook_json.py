@@ -73,36 +73,51 @@ def calcular_data(tempo_str):
 #  Obter sinopse da página do anime
 # ───────────────────────────────────────────────
 def obter_sinopse(link_ep):
-    """Extrai o segundo <p> dentro de .description; se não tiver, pega o primeiro."""
     global WORKING_SCRAPER, WORKING_PROXY
+    if not WORKING_SCRAPER:
+        return ""
 
+    # Abrir página do episódio
     try:
-        # https://www.animesbr.app/episodios/assistir-tougen-anki-episodio-18
-        slug = link_ep.split("/episodios/assistir-")[-1].split("-episodio")[0]
-        url_anime = f"https://www.animesbr.app/animes/{slug}"
-
-        r = WORKING_SCRAPER.get(url_anime, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
+        r = WORKING_SCRAPER.get(link_ep, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
         r.raise_for_status()
-
-        soup = BeautifulSoup(r.text, "html.parser")
-        desc = soup.select_one("div.description")
-
-        if not desc:
-            return ""
-
-        ps = desc.find_all("p")
-
-        if len(ps) >= 2:
-            return ps[1].get_text(strip=True)
-
-        if len(ps) == 1:
-            return ps[0].get_text(strip=True)
-
+    except:
+        print(f"[ERRO] Falha ao abrir página do episódio: {link_ep}")
         return ""
 
-    except Exception as e:
-        print("[ERRO] Falha ao obter sinopse:", e)
+    soup = BeautifulSoup(r.text, "html.parser")
+
+    # Pega link da página do anime
+    anime_info = soup.select_one(".info-epi a")
+    anime_url = anime_info["href"] if anime_info else None
+    if not anime_url:
         return ""
+
+    # Abrir página do anime
+    try:
+        r2 = WORKING_SCRAPER.get(anime_url, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
+        r2.raise_for_status()
+    except:
+        print(f"[ERRO] Falha ao abrir página do anime: {anime_url}")
+        return ""
+
+    soup2 = BeautifulSoup(r2.text, "html.parser")
+
+    desc = soup2.select_one("div.description")
+    if not desc:
+        return ""
+
+    # Caso 1: existe <p>
+    p_tags = desc.find_all("p")
+    if len(p_tags) >= 2:
+        return p_tags[1].get_text(" ", strip=True)
+
+    if len(p_tags) == 1:
+        return p_tags[0].get_text(" ", strip=True)
+
+    # Caso 2: não existem <p>, mas existe texto direto
+    raw_text = desc.get_text(" ", strip=True)
+    return raw_text
 
 
 # ───────────────────────────────────────────────
@@ -182,7 +197,6 @@ def get_ultimos_episodios(limit=5):
 def post_discord(ep):
     global WORKING_SCRAPER
 
-    # baixar imagem (sem crop)
     files = {}
     if ep["imagem"]:
         try:
@@ -192,10 +206,11 @@ def post_discord(ep):
         except:
             pass
 
-    # obter sinopse
+    # --- sinopse ---
     sinopse = obter_sinopse(ep["link"])
+
     if sinopse:
-        descricao = sinopse + f"\n\n👉 [Assistir online]({ep['link']})"
+        descricao = sinopse + f"\n👉 [Assistir online]({ep['link']})"
     else:
         descricao = f"👉 [Assistir online]({ep['link']})"
 
