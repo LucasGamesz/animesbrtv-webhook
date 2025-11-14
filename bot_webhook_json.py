@@ -92,7 +92,7 @@ def get_ultimos_episodios(limit=5):
         try:
             prox_dict = {"http": proxy, "https": proxy}
             print(f"[TESTE] Proxy: {proxy}")
-            r = scraper.get(URL, headers=HEADERS, timeout=15, proxies=prox_dict)
+            r = scraper.get(URL, headers=HEADERS, timeout=10, proxies=prox_dict)
             r.raise_for_status()
             r.encoding = r.apparent_encoding
             WORKING_SCRAPER = scraper
