@@ -149,7 +149,8 @@ def get_ultimos_episodios(limit=5):
         ep_info_el = art.select_one("span.num-epi")
         ep_info = ep_info_el.get_text(strip=True) if ep_info_el else "?"
 
-        titulo_final = f"{titulo_raw} ({ep_info})"
+        # título final atualizado
+        titulo_final = f"<:Animesbrapp:1439021183365288111> {titulo_raw} ({ep_info})"
 
         link_el = art.select_one("a.lnk-blk")
         link = link_el["href"] if link_el else None
@@ -182,7 +183,6 @@ def get_ultimos_episodios(limit=5):
 def post_discord(ep):
     global WORKING_SCRAPER
 
-    # baixar imagem (sem crop)
     files = {}
     if ep["imagem"]:
         try:
@@ -195,7 +195,7 @@ def post_discord(ep):
     # obter sinopse
     sinopse = obter_sinopse(ep["link"])
     if sinopse:
-        descricao = sinopse + f"\n\n👉 [Assistir online]({ep['link']})"
+        descricao = sinopse + f"\n👉 [Assistir online]({ep['link']})"
     else:
         descricao = f"👉 [Assistir online]({ep['link']})"
 
