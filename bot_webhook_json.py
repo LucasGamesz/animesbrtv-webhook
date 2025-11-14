@@ -72,6 +72,14 @@ def calcular_data(tempo_str):
 # ───────────────────────────────────────────────
 #  Obter sinopse da página do anime
 # ───────────────────────────────────────────────
+def limpar_sinopse(texto):
+    """Remove trechos como 'Assistir Episódio X Online', links e chamadas de ação."""
+    texto = re.sub(r"Assistir.*?Online", "", texto, flags=re.I)
+    texto = re.sub(r"Episódio\s*\d+", "", texto, flags=re.I)
+    texto = re.sub(r"\s{2,}", " ", texto).strip()
+    return texto
+
+
 def obter_sinopse(link_ep):
     global WORKING_SCRAPER, WORKING_PROXY
     if not WORKING_SCRAPER:
@@ -107,17 +115,16 @@ def obter_sinopse(link_ep):
     if not desc:
         return ""
 
-    # Caso 1: existe <p>
+    # CASO 1 — Existe <p>
     p_tags = desc.find_all("p")
     if len(p_tags) >= 2:
-        return p_tags[1].get_text(" ", strip=True)
-
+        return limpar_sinopse(p_tags[1].get_text(" ", strip=True))
     if len(p_tags) == 1:
-        return p_tags[0].get_text(" ", strip=True)
+        return limpar_sinopse(p_tags[0].get_text(" ", strip=True))
 
-    # Caso 2: não existem <p>, mas existe texto direto
+    # CASO 2 — texto direto (tipo: Assistir Episódio X...)
     raw_text = desc.get_text(" ", strip=True)
-    return raw_text
+    return limpar_sinopse(raw_text)
 
 
 # ───────────────────────────────────────────────
