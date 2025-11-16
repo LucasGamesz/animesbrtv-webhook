@@ -10,7 +10,7 @@ WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 PROXY_URL   = os.getenv("PROXY_URL")
 
 DB_FILE = "episodios_postados.json"
-URL = "https://animesbr.app"
+URL = "https://animesbr.org"
 LIMIT = 5
 ROLE_ID = "1391784968786808873"
 
