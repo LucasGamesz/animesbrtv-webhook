@@ -11,7 +11,7 @@ PROXY_URL   = os.getenv("PROXY_URL")
 
 DB_FILE = "episodios_postados.json"
 URL = "https://animebr.org"
-LIMIT = 5
+LIMIT = 10
 ROLE_ID = "1391784968786808873"
 
 HEADERS = {
