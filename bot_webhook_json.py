@@ -87,7 +87,8 @@ def obter_sinopse(link_ep):
 
         r = WORKING_SCRAPER.get(link_anime, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
         r.raise_for_status()
-
+        r.encoding = "utf-8"
+        
         soup = BeautifulSoup(r.text, "html.parser")
         desc = soup.select_one("div.description")
 
