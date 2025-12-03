@@ -58,6 +58,7 @@ def obter_link_anime(link_ep):
     try:
         r = WORKING_SCRAPER.get(link_ep, headers=HEADERS, timeout=10, proxies=WORKING_PROXY)
         r.raise_for_status()
+        r.encoding = "utf-8"
 
         soup = BeautifulSoup(r.text, "html.parser")
 
